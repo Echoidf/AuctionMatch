@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"strconv"
+	"sync"
 
 	"AuctionMatch/utils"
 )
@@ -18,25 +19,49 @@ type Order struct {
 	Volume       int
 }
 
-// PriceLevel 表示价格档位信息
+// PriceLevel 价格档位信息
 type PriceLevel struct {
-	Price           float64
-	BuyVolume       int // 买入量
-	SellVolume      int // 卖出量
-	AccumBuyVolume  int // 累计买入量
-	AccumSellVolume int // 累计卖出量
-	MatchVolume     int // 成交量
-	RemainVolume    int // 剩余量
+	Price      float64
+	BuyVolume  int
+	SellVolume int
+}
+
+const (
+	PRICE_TICK   = 0.2 // 价格最小变动单位
+	WORKER_COUNT = 4   // 并发工作协程数
+)
+
+// OrderBatch 表示一批需要处理的订单
+type OrderBatch struct {
+	Orders       []Order
+	InstrumentID string
+}
+
+// PriceLevelMap 价格档位映射
+type PriceLevelMap struct {
+	buyLevels  map[int64]int // 买单价格档位
+	sellLevels map[int64]int // 卖单价格档位
+	highestBid float64       // 最高买单价格
+	lowestAsk  float64       // 最低卖单价格
+	sync.RWMutex
+}
+
+func NewPriceLevelMap() *PriceLevelMap {
+	return &PriceLevelMap{
+		buyLevels:  make(map[int64]int),
+		sellLevels: make(map[int64]int),
+		highestBid: -1,
+		lowestAsk:  -1,
+	}
 }
 
 func main() {
-	// 检查是否请求帮助信息
+	// 检查参数
 	if len(os.Args) == 2 && os.Args[1] == "-h" {
 		printUsage()
 		return
 	}
 
-	// 检查参数
 	if len(os.Args) < 2 {
 		fmt.Println("参数错误！使用 -h 查看帮助信息")
 		return
@@ -45,20 +70,80 @@ func main() {
 	// 读取输入文件
 	orders, instruments := readOrders(os.Args[1])
 
-	// 将订单按合约ID分组
-	ordersByInstrument := make(map[string][]Order)
-	for _, order := range orders {
-		ordersByInstrument[order.InstrumentID] = append(ordersByInstrument[order.InstrumentID], order)
+	// 如果没有订单或合约，直接返回
+	if len(orders) == 0 || len(instruments) == 0 {
+		writeResults(make(map[string]float64), instruments, "")
+		return
 	}
 
-	// 处理每个合约
+	// 使用缓冲channel进行并发处理
+	workerCount := utils.Min(WORKER_COUNT, len(instruments)) // 根据合约数量调整worker数
+	batchChan := make(chan OrderBatch, workerCount)
+	resultChan := make(chan struct {
+		instrumentID string
+		price        float64
+	}, len(instruments)) // 使用缓冲channel
+
+	// 启动工作协程
+	var wg sync.WaitGroup
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for batch := range batchChan {
+				price := calculateAuctionPrice(batch.Orders)
+				resultChan <- struct {
+					instrumentID string
+					price        float64
+				}{batch.InstrumentID, price}
+			}
+		}()
+	}
+
+	// 确保正确初始化 map
 	results := make(map[string]float64)
-	for _, instrumentID := range instruments {
-		price := calculateAuctionPrice(ordersByInstrument[instrumentID])
-		results[instrumentID] = price
+	ordersByInstrument := make(map[string][]Order)
+
+	// 分发订单批次
+	for _, order := range orders {
+		if ordersByInstrument[order.InstrumentID] == nil {
+			ordersByInstrument[order.InstrumentID] = make([]Order, 0)
+		}
+		ordersByInstrument[order.InstrumentID] = append(
+			ordersByInstrument[order.InstrumentID],
+			order,
+		)
 	}
 
-	// 根据参数决定输出方式
+	// 启动结果收集协程
+	done := make(chan bool)
+	go func() {
+		receivedCount := 0
+		for result := range resultChan {
+			results[result.instrumentID] = result.price
+			receivedCount++
+			if receivedCount == len(instruments) {
+				close(done)
+				return
+			}
+		}
+	}()
+
+	// 发送订单批次
+	for _, instrumentID := range instruments {
+		batchChan <- OrderBatch{
+			Orders:       ordersByInstrument[instrumentID],
+			InstrumentID: instrumentID,
+		}
+	}
+	close(batchChan)
+
+	// 等待所有处理完成
+	wg.Wait()
+	close(resultChan)
+	<-done
+
+	// 输出结果
 	if len(os.Args) == 4 && os.Args[2] == "-o" {
 		writeResults(results, instruments, os.Args[3])
 	} else {
@@ -123,7 +208,7 @@ func readOrders(filename string) ([]Order, []string) {
 			continue
 		}
 
-		// 解析volume
+		// 析volume
 		volume, err := strconv.Atoi(record[3])
 		if err != nil {
 			fmt.Printf("无效的volume值: %s\n", record[3])
@@ -151,124 +236,89 @@ func readOrders(filename string) ([]Order, []string) {
 	return orders, instruments
 }
 
-const PRICE_TICK = 0.2 // 价格最小变动单位
-
-// calculateAuctionPrice 计算某个合约的集合竞价价格
+// 价格计算函数
 func calculateAuctionPrice(orders []Order) float64 {
 	if len(orders) == 0 {
 		return 0
 	}
 
-	// 1. 分离买卖订单并找出最高买价和最低卖价
-	var buyOrders, sellOrders []Order
-	var highestBid float64 = -1
-	var lowestAsk float64 = -1
+	priceMap := NewPriceLevelMap()
+	prices := utils.NewOrderedSet()
 
+	// 第一次遍历：收集价格点和统计量
 	for _, order := range orders {
+		priceInt := toInt(order.Price)
+
+		prices.Add(priceInt)
+
 		if order.Direction == 0 { // 买单
-			buyOrders = append(buyOrders, order)
-			if highestBid == -1 || order.Price > highestBid {
-				highestBid = order.Price
+			priceMap.buyLevels[priceInt] += order.Volume
+			if priceMap.highestBid == -1 || order.Price > priceMap.highestBid {
+				priceMap.highestBid = order.Price
 			}
 		} else { // 卖单
-			sellOrders = append(sellOrders, order)
-			if lowestAsk == -1 || order.Price < lowestAsk {
-				lowestAsk = order.Price
+			priceMap.sellLevels[priceInt] += order.Volume
+			if priceMap.lowestAsk == -1 || order.Price < priceMap.lowestAsk {
+				priceMap.lowestAsk = order.Price
 			}
 		}
 	}
 
-	// 2. 检查是否有买卖订单
-	if len(buyOrders) == 0 || len(sellOrders) == 0 {
+	if priceMap.highestBid < priceMap.lowestAsk ||
+		priceMap.highestBid == -1 ||
+		priceMap.lowestAsk == -1 {
 		return 0
 	}
 
-	// 3. 检查价格是否交叉
-	if highestBid < lowestAsk {
-		return 0
-	}
+	// 计算每个价格点的累计买卖量
+	maxMatchVolume := -1
+	minRemainVolume := math.MaxInt32
+	var bestPrice int64
 
-	// 4. 构造价格档位表
-	priceLevels := make(map[int64]*PriceLevel)
-	// 将价格转换为整数表示（乘以一个足够大的数以保持精度）
-	toInt := func(price float64) int64 {
-		return int64(math.Round(price / PRICE_TICK))
-	}
-	toFloat := func(priceInt int64) float64 {
-		return float64(priceInt) * PRICE_TICK
-	}
-	// 从最低卖价到最高买价，按PRICE_TICK递增
-	for priceInt := toInt(lowestAsk); priceInt <= toInt(highestBid); priceInt++ {
-		price := toFloat(priceInt)
-		priceLevels[priceInt] = &PriceLevel{Price: price}
-	}
-
-	// 5. 统计各价格档位的买卖量
-	for _, order := range buyOrders {
-		orderPriceInt := toInt(order.Price)
-		if level, exists := priceLevels[orderPriceInt]; exists {
-			level.BuyVolume += order.Volume
-		}
-	}
-
-	for _, order := range sellOrders {
-		orderPriceInt := toInt(order.Price)
-		if level, exists := priceLevels[orderPriceInt]; exists {
-			level.SellVolume += order.Volume
-		}
-	}
-
-	// 5.1 计算累计买卖量
-	var prevBuyVolume, prevSellVolume int
-	// 从高到低计算累计买量
-	for priceInt := toInt(highestBid); priceInt >= toInt(lowestAsk); priceInt-- {
-		if level, exists := priceLevels[priceInt]; exists {
-			level.AccumBuyVolume = level.BuyVolume + prevBuyVolume
-			prevBuyVolume = level.AccumBuyVolume
-		}
-	}
-	// 从低到高计算累计卖量
-	for priceInt := toInt(lowestAsk); priceInt <= toInt(highestBid); priceInt++ {
-		if level, exists := priceLevels[priceInt]; exists {
-			level.AccumSellVolume = level.SellVolume + prevSellVolume
-			prevSellVolume = level.AccumSellVolume
-		}
-	}
-
-	// 6. 计算每个价格档位的成交量和剩余量
-	var maxMatchVolume int = -1
-	var minRemainVolume int = math.MaxInt32
-	var candidatePriceInts []int64
-
-	// 第一轮：找出最大成交量
-	for _, level := range priceLevels {
-		level.MatchVolume = utils.Min(level.AccumBuyVolume, level.AccumSellVolume)
-		level.RemainVolume = utils.Abs(level.AccumBuyVolume - level.AccumSellVolume)
-		if level.MatchVolume > maxMatchVolume {
-			maxMatchVolume = level.MatchVolume
-		}
-	}
-
-	// 第二轮：在最大成交量的价位中找出最小剩余量
-	for priceInt, level := range priceLevels {
-		if level.MatchVolume == maxMatchVolume {
-			if level.RemainVolume < minRemainVolume {
-				minRemainVolume = level.RemainVolume
-				candidatePriceInts = []int64{priceInt}
-			} else if level.RemainVolume == minRemainVolume {
-				candidatePriceInts = append(candidatePriceInts, priceInt)
+	// 从高到低遍历价格
+	for _, priceInt := range prices.GetSorted(true) {
+		// 计算当前价格及以上的累计买量
+		accumBuy := 0
+		for p := range priceMap.buyLevels {
+			if p >= priceInt {
+				accumBuy += priceMap.buyLevels[p]
 			}
 		}
+
+		// 计算当前价格及以下的累计卖量
+		accumSell := 0
+		for p := range priceMap.sellLevels {
+			if p <= priceInt {
+				accumSell += priceMap.sellLevels[p]
+			}
+		}
+
+		matchVolume := utils.Min(accumBuy, accumSell)
+		remainVolume := utils.Abs(accumBuy - accumSell)
+
+		// 更新最优价格
+		if matchVolume > maxMatchVolume ||
+			(matchVolume == maxMatchVolume && remainVolume < minRemainVolume) {
+			maxMatchVolume = matchVolume
+			minRemainVolume = remainVolume
+			bestPrice = priceInt
+		}
 	}
 
-	// 7. 如果没有找到合适的价格，返回0
-	if len(candidatePriceInts) == 0 {
+	if maxMatchVolume <= 0 {
 		return 0
 	}
 
-	// 8. 返回候选价格中的最高价格
-	maxPriceInt := utils.FindMax(candidatePriceInts)
-	return toFloat(maxPriceInt)
+	return toFloat(bestPrice)
+}
+
+// 工具函数
+func toInt(price float64) int64 {
+	return int64(math.Round(price / PRICE_TICK))
+}
+
+func toFloat(priceInt int64) float64 {
+	return float64(priceInt) * PRICE_TICK
 }
 
 // writeResults 将结果写入标准输出
