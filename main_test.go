@@ -3,9 +3,12 @@ package main
 import (
 	"AuctionMatch/utils"
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
+	"time"
 )
 
 // TestFullAuctionMatchProcess 测试完整的撮合流程
@@ -195,4 +198,92 @@ func stringSliceEqual(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// generateLargeTestData 生成大批量测试数据
+func generateLargeTestData(numOrders int) string {
+	var buffer bytes.Buffer
+	instruments := []string{"IF2412", "IF2306", "IF2403", "IF2406"}
+
+	for i := 0; i < numOrders; i++ {
+		// 随机选择合约
+		instrument := instruments[i%len(instruments)]
+		// 随机生成买卖方向 (0或1)
+		direction := i % 2
+		// 生成基准价格 3900.0 到 4000.0 之间的随机价格
+		basePrice := 3900.0 + float64(i%100)
+		// 添加随机小数位
+		price := basePrice + float64(i%10)*0.2
+		// 生成 1-10 之间的随机数量
+		volume := 1 + (i % 10)
+
+		buffer.WriteString(fmt.Sprintf("%s,%d,%.1f,%d\n",
+			instrument, direction, price, volume))
+	}
+	return buffer.String()
+}
+
+// TestLargeScaleAuctionMatch 压力测试
+func TestLargeScaleAuctionMatch(t *testing.T) {
+	tests := []struct {
+		name      string
+		numOrders int
+	}{
+		{"1000个订单测试", 1000},
+		{"100000个订单测试", 100000},
+		{"1000000个订单测试", 1000000},
+		{"8000000个订单测试", 8000000},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// 记录初始内存状态
+			var initialMemStats, finalMemStats runtime.MemStats
+			runtime.ReadMemStats(&initialMemStats)
+
+			// 生成测试数据
+			inputContent := generateLargeTestData(tt.numOrders)
+
+			// 创建临时测试文件
+			tmpDir := t.TempDir()
+			inputFile := filepath.Join(tmpDir, "large_input.csv")
+			err := os.WriteFile(inputFile, []byte(inputContent), 0644)
+			if err != nil {
+				t.Fatalf("创建大规模测试文件失败: %v", err)
+			}
+
+			// 记录开始时间
+			start := time.Now()
+
+			// 捕获标准输出
+			oldStdout := os.Stdout
+			r, w, _ := os.Pipe()
+			os.Stdout = w
+
+			// 运行主程序
+			os.Args = []string{"cmd", inputFile}
+			main()
+
+			// 恢复标准输出
+			w.Close()
+			os.Stdout = oldStdout
+			var buf bytes.Buffer
+			buf.ReadFrom(r)
+
+			// 记录最终内存状态
+			runtime.ReadMemStats(&finalMemStats)
+
+			// 计算执行时间
+			duration := time.Since(start)
+
+			// 计算内存使用情况（以MB为单位）
+			allocatedMemory := float64(finalMemStats.TotalAlloc-initialMemStats.TotalAlloc) / 1024 / 1024
+			heapObjects := finalMemStats.HeapObjects - initialMemStats.HeapObjects
+
+			// 输出性能指标
+			t.Logf("处理 %d 个订单耗时: %v", tt.numOrders, duration)
+			t.Logf("内存分配: %.2f MB", allocatedMemory)
+			t.Logf("堆对象数量: %d", heapObjects)
+		})
+	}
 }

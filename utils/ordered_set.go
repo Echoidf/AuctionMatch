@@ -30,6 +30,10 @@ func (s *OrderedSet) Add(item int64) {
 	s.mu.Unlock()
 }
 
+func (s *OrderedSet) Len() int {
+	return len(s.items)
+}
+
 // GetSorted 获取排序后的元素列表
 func (s *OrderedSet) GetSorted(desc bool) []int64 {
 	s.mu.Lock()

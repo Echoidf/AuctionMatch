@@ -270,39 +270,51 @@ func calculateAuctionPrice(orders []Order) float64 {
 		return 0
 	}
 
-	// 计算每个价格点的累计买卖量
-	maxMatchVolume := -1
-	minRemainVolume := math.MaxInt32
-	var bestPrice int64
+	// 预先计算每个价格点的买卖量
+	type PricePoint struct {
+		price      int64
+		buyVolume  int
+		sellVolume int
+	}
 
-	// 从高到低遍历价格
+	maxMatchVolume := -1             // 最大成交量
+	minRemainVolume := math.MaxInt32 // 最小剩余量
+	var bestPrice int64              // 最佳竞价
+
+	accumBuy := 0  // 当前价格及以上的累计买量
+	accumSell := 0 // 所有卖单总量
+
+	// 将所有价格点从高到低排序并预处理数据
+	pricePoints := make([]PricePoint, 0, prices.Len())
 	for _, priceInt := range prices.GetSorted(true) {
-		// 计算当前价格及以上的累计买量
-		accumBuy := 0
-		for p := range priceMap.buyLevels {
-			if p >= priceInt {
-				accumBuy += priceMap.buyLevels[p]
-			}
-		}
+		sellVolume := priceMap.sellLevels[priceInt]
+		pricePoints = append(pricePoints, PricePoint{
+			price:      priceInt,
+			buyVolume:  priceMap.buyLevels[priceInt],
+			sellVolume: sellVolume,
+		})
+		accumSell += sellVolume
+	}
 
-		// 计算当前价格及以下的累计卖量
-		accumSell := 0
-		for p := range priceMap.sellLevels {
-			if p <= priceInt {
-				accumSell += priceMap.sellLevels[p]
-			}
-		}
+	// 只需要遍历一次价格点
+	for _, pp := range pricePoints {
+		accumBuy += pp.buyVolume
 
-		matchVolume := utils.Min(accumBuy, accumSell)
-		remainVolume := utils.Abs(accumBuy - accumSell)
+		// 当前价格以下的累计卖量
+		currentSell := accumSell
 
-		// 更新最优价格
+		matchVolume := utils.Min(accumBuy, currentSell)
+		remainVolume := utils.Abs(accumBuy - currentSell)
+
 		if matchVolume > maxMatchVolume ||
 			(matchVolume == maxMatchVolume && remainVolume < minRemainVolume) {
 			maxMatchVolume = matchVolume
 			minRemainVolume = remainVolume
-			bestPrice = priceInt
+			bestPrice = pp.price
 		}
+
+		// 为下一个价格点更新累计卖量
+		accumSell -= pp.sellVolume
 	}
 
 	if maxMatchVolume <= 0 {
