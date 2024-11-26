@@ -66,14 +66,14 @@ func Abs[T Number](x T) T {
 }
 
 // 添加浮点数比较的辅助函数
-func FloatEquals(a, b float64) bool {
-	return math.Abs(a-b) < EPSILON
+func FloatEquals(a, b float32) bool {
+	return math.Abs(float64(a-b)) < EPSILON
 }
 
-func FloatLessEqual(a, b float64) bool {
+func FloatLessEqual(a, b float32) bool {
 	return a < b || FloatEquals(a, b)
 }
 
-func FloatGreaterEqual(a, b float64) bool {
+func FloatGreaterEqual(a, b float32) bool {
 	return a > b || FloatEquals(a, b)
 }
