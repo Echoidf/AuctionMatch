@@ -8,7 +8,7 @@ import (
 type (
 	// OrderStream 订单流
 	OrderStream struct {
-		Orders   chan Order
+		Orders   chan string
 		Error    chan error
 		Done     chan struct{}
 		ChunkNum uint
@@ -50,7 +50,7 @@ const (
 
 func NewOrderStream() *OrderStream {
 	return &OrderStream{
-		Orders: make(chan Order, 1000),
+		Orders: make(chan string, 1000),
 		Error:  make(chan error, 1),
 		Done:   make(chan struct{}),
 	}

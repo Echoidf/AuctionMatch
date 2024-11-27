@@ -4,6 +4,7 @@ import (
 	"AuctionMatch/order"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 )
 
@@ -16,32 +17,6 @@ func checkArgs() {
 	if len(os.Args) < 2 {
 		fmt.Println("参数错误！使用 -h 查看帮助信息")
 		return
-	}
-}
-
-func main() {
-	checkArgs()
-	// 创建订单流
-	stream := order.StreamOrders(os.Args[1])
-
-	processor := order.NewOrderProcessor(1)
-
-	// 处理错误
-	go func() {
-		for err := range stream.Error {
-			fmt.Println(err)
-		}
-	}()
-
-	// 等待所有数据处理完成
-	results := processor.Process(stream)
-	<-stream.Done
-
-	// 输出结果
-	if len(os.Args) == 4 && os.Args[2] == "-o" {
-		writeResults(results, os.Args[3])
-	} else {
-		writeResults(results, "")
 	}
 }
 
@@ -72,7 +47,8 @@ func writeResults(results []order.ProcessResult, outputFile string) {
 		if item.Price == 0 {
 			output.WriteString(fmt.Sprintf("%s,\n", item.InstrumentID))
 		} else {
-			output.WriteString(fmt.Sprintf("%s,%.1f\n", item.InstrumentID, item.Price))
+			// 与输入精度保持一致
+			output.WriteString(fmt.Sprintf("%s,%.*f\n", item.InstrumentID, item.Scale, item.Price))
 		}
 	}
 
@@ -85,5 +61,31 @@ func writeResults(results []order.ProcessResult, outputFile string) {
 			fmt.Printf("写入结果时发生错误: %v\n", err)
 			os.Exit(1)
 		}
+	}
+}
+
+func main() {
+	checkArgs()
+	// 创建订单流
+	stream := order.StreamOrders(os.Args[1])
+
+	processor := order.NewOrderProcessor(runtime.NumCPU())
+
+	// 处理错误
+	go func() {
+		for err := range stream.Error {
+			fmt.Println(err)
+		}
+	}()
+
+	// 等待所有数据处理完成
+	results := processor.Process(stream)
+	<-stream.Done
+
+	// 输出结果
+	if len(os.Args) == 4 && os.Args[2] == "-o" {
+		writeResults(results, os.Args[3])
+	} else {
+		writeResults(results, "")
 	}
 }

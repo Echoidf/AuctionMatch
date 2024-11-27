@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -110,7 +111,16 @@ IF2306,1,3972.0,1`
 	}()
 
 	// 收集订单
-	for order := range stream.Orders {
+	for line := range stream.Orders {
+		record := strings.Split(line, ",")
+		if !order.IsValidRecord(record) {
+			continue
+		}
+		order, err := order.ParseOrder(record)
+		if err != nil {
+			stream.Error <- fmt.Errorf("解析订单出错: %v", err)
+			continue
+		}
 		orders = append(orders, order)
 	}
 
@@ -214,7 +224,16 @@ IF2306,1,3972.0,1`
 	}()
 
 	// 收集订单
-	for order := range stream.Orders {
+	for line := range stream.Orders {
+		record := strings.Split(line, ",")
+		if !order.IsValidRecord(record) {
+			continue
+		}
+		order, err := order.ParseOrder(record)
+		if err != nil {
+			stream.Error <- fmt.Errorf("解析订单出错: %v", err)
+			continue
+		}
 		orders = append(orders, order)
 	}
 

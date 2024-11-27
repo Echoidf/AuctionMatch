@@ -13,6 +13,7 @@ type (
 	ProcessResult struct {
 		InstrumentID string
 		Price        float32
+		Scale        uint // 精度
 	}
 	OrderProcessor interface {
 		Process(stream *OrderStream) []ProcessResult
@@ -21,18 +22,20 @@ type (
 
 // 创建处理器工厂函数
 func NewOrderProcessor(numCPU int) OrderProcessor {
-	return &SingleProcessor{
-		batchSize: 1000,
+	if numCPU <= 1 {
+		return &SingleProcessor{}
+	} else {
+		return &ParallelProcessor{numWorkers: numCPU}
 	}
 }
 
 // 辅助函数：验证记录的有效性
-func isValidRecord(record []string) bool {
+func IsValidRecord(record []string) bool {
 	return len(record) == 4
 }
 
 // 辅助函数：解析订单数据
-func parseOrder(record []string) (Order, error) {
+func ParseOrder(record []string) (Order, error) {
 	direction, err := strconv.Atoi(record[1])
 	if err != nil || (direction != 0 && direction != 1) {
 		return Order{}, fmt.Errorf("无效的direction值: %s", record[1])
@@ -78,19 +81,19 @@ func StreamOrders(filename string) *OrderStream {
 			if line == "" {
 				continue
 			}
-			record := strings.Split(line, ",")
-			if !isValidRecord(record) {
-				continue
-			}
+			// record := strings.Split(line, ",")
+			// if !isValidRecord(record) {
+			// 	continue
+			// }
 
-			order, err := parseOrder(record)
-			if err != nil {
-				stream.Error <- fmt.Errorf("解析订单出错: %v", err)
-				continue
-			}
+			// order, err := ParseOrder(record)
+			// if err != nil {
+			// 	stream.Error <- fmt.Errorf("解析订单出错: %v", err)
+			// 	continue
+			// }
 
 			// 发送订单到channel
-			stream.Orders <- order
+			stream.Orders <- line
 		}
 	}()
 
