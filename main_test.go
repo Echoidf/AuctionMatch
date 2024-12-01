@@ -260,10 +260,6 @@ func TestLargeScaleAuctionMatch(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// 记录初始内存状态
-			var initialMemStats, finalMemStats runtime.MemStats
-			runtime.ReadMemStats(&initialMemStats)
-
 			// 生成测试数据
 			inputContent := generateLargeTestData(tt.numOrders)
 
@@ -275,9 +271,12 @@ func TestLargeScaleAuctionMatch(t *testing.T) {
 				t.Fatalf("创建大规模测试文件失败: %v", err)
 			}
 
+			// 记录初始内存状态
+			var initialMemStats, finalMemStats runtime.MemStats
+			runtime.ReadMemStats(&initialMemStats)
+
 			// 记录开始时间
 			start := time.Now()
-
 			// 启动流式处理
 			stream := order.StreamOrders(inputFile)
 			// 创建合适的处理器
@@ -311,12 +310,14 @@ func TestExample(t *testing.T) {
 		"input/example1_normal_small.csv",
 		"input/example2_new_decision_algorithm_in_email.csv",
 		"input/example3_only_sells.csv",
+		"input/example5_long_time.csv",
 	}
 
 	testOutputs := []string{
 		"output/example1_output.csv",
 		"output/example2_output.csv",
 		"output/example3_output.csv",
+		"output/example5_output.csv",
 	}
 
 	for index, tt := range testFiles {
@@ -328,7 +329,11 @@ func TestExample(t *testing.T) {
 
 			// 运行主程序
 			os.Args = []string{"cmd", tt}
+			// 记录开始时间
+			start := time.Now()
 			main()
+			duration := time.Since(start)
+			t.Logf("测试文件 %s 集合竞价耗时: %vms", tt, duration.Milliseconds())
 
 			// 恢复标准输出
 			w.Close()
@@ -339,8 +344,44 @@ func TestExample(t *testing.T) {
 
 			// 比较输出和预期输出文件内容是否一致
 			expectedOutput, _ := os.ReadFile(testOutputs[index])
-			if output != string(expectedOutput) {
-				t.Errorf("输出不匹配")
+			expectedStr := string(expectedOutput)
+			if output != expectedStr {
+				// 按行分割进行比较
+				expectedLines := strings.Split(expectedStr, "\n")
+				actualLines := strings.Split(output, "\n")
+
+				t.Errorf("输出不匹配:\n期望输出长度: %d, 实际输出长度: %d", len(expectedStr), len(output))
+
+				// 找出第一个不匹配的行
+				minLen := len(expectedLines)
+				if len(actualLines) < minLen {
+					minLen = len(actualLines)
+				}
+
+				for i := 0; i < minLen; i++ {
+					if expectedLines[i] != actualLines[i] {
+						t.Errorf("\n第 %d 行不匹配:\n期望: [%s]\n实际: [%s]", i+1, expectedLines[i], actualLines[i])
+						// 如果是数值不匹配，尝试解析并比较
+						expectedParts := strings.Split(expectedLines[i], ",")
+						actualParts := strings.Split(actualLines[i], ",")
+						if len(expectedParts) == 2 && len(actualParts) == 2 {
+							t.Errorf("价格比较:\n期望价格: [%s]\n实际价格: [%s]",
+								expectedParts[1], actualParts[1])
+						}
+						break
+					}
+				}
+
+				// 如果行数不同，显示多出或缺少的行
+				if len(expectedLines) != len(actualLines) {
+					t.Errorf("\n行数不匹配:\n期望行数: %d\n实际行数: %d",
+						len(expectedLines), len(actualLines))
+					if len(expectedLines) > len(actualLines) {
+						t.Errorf("缺少的行:\n%s", strings.Join(expectedLines[len(actualLines):], "\n"))
+					} else {
+						t.Errorf("多出的行:\n%s", strings.Join(actualLines[len(expectedLines):], "\n"))
+					}
+				}
 			}
 		})
 	}

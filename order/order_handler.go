@@ -65,14 +65,14 @@ func StreamOrders(filename string) *OrderStream {
 
 	go func() {
 		defer close(stream.Orders)
-		defer close(stream.Error)
+		// defer close(stream.Error)
 		defer close(stream.Done)
 
-		file, err := os.Open(filename)
-		if err != nil {
-			stream.Error <- fmt.Errorf("无法打开文件: %v", err)
-			return
-		}
+		file, _ := os.Open(filename)
+		// if err != nil {
+		// 	stream.Error <- fmt.Errorf("无法打开文件: %v", err)
+		// 	return
+		// }
 		defer file.Close()
 
 		scanner := bufio.NewScanner(file)
@@ -81,17 +81,6 @@ func StreamOrders(filename string) *OrderStream {
 			if line == "" {
 				continue
 			}
-			// record := strings.Split(line, ",")
-			// if !isValidRecord(record) {
-			// 	continue
-			// }
-
-			// order, err := ParseOrder(record)
-			// if err != nil {
-			// 	stream.Error <- fmt.Errorf("解析订单出错: %v", err)
-			// 	continue
-			// }
-
 			// 发送订单到channel
 			stream.Orders <- line
 		}

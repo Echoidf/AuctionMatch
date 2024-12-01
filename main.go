@@ -57,7 +57,8 @@ func writeResults(results []order.ProcessResult, outputFile string) {
 	if outputFile == "" {
 		fmt.Print(outputStr)
 	} else {
-		if err := os.WriteFile(outputFile, []byte(outputStr), 0644); err != nil {
+		// 确保使用UTF-8编码并保持原有的换行符
+		if err := os.WriteFile(outputFile, []byte(strings.ReplaceAll(outputStr, "\n", "\r\n")), 0644); err != nil {
 			fmt.Printf("写入结果时发生错误: %v\n", err)
 			os.Exit(1)
 		}

@@ -13,7 +13,7 @@ type PricePoint struct {
 
 // 工具函数
 func ToInt(price float32, tick float32) int64 {
-	return int64(math.Round(float64(price / tick)))
+	return int64(price*10000) / int64(tick*10000)
 }
 
 func ToFloat(priceInt int64, tick float32) float32 {
@@ -49,7 +49,6 @@ func CalculateAuctionPrice(orders []Order) float32 {
 		}
 	}
 
-	// 修改价格点的收集逻辑
 	lowestPriceInt := ToInt(priceMap.lowestAsk, tick)
 	highestPriceInt := ToInt(priceMap.highestBid, tick)
 
@@ -60,6 +59,13 @@ func CalculateAuctionPrice(orders []Order) float32 {
 		return 0
 	}
 
+	maxMatchVolume := -1
+	minRemainVolume := math.MaxInt32
+	var bestPrice int64
+
+	accumBuy := 0
+	accumSell := 0
+
 	// 构造完整的分价表
 	pricePoints := make([]PricePoint, 0)
 	for priceInt := highestPriceInt; priceInt >= lowestPriceInt; priceInt-- {
@@ -68,18 +74,7 @@ func CalculateAuctionPrice(orders []Order) float32 {
 			buyVolume:  priceMap.buyLevels[priceInt],
 			sellVolume: priceMap.sellLevels[priceInt],
 		})
-	}
-
-	maxMatchVolume := -1
-	minRemainVolume := math.MaxInt32
-	var bestPrice int64
-
-	accumBuy := 0
-	accumSell := 0
-
-	// 计算所有卖单总量
-	for _, pp := range pricePoints {
-		accumSell += pp.sellVolume
+		accumSell += priceMap.sellLevels[priceInt]
 	}
 
 	// 从高到低遍历所有价格点
@@ -90,7 +85,8 @@ func CalculateAuctionPrice(orders []Order) float32 {
 		remainVolume := utils.Abs(accumBuy - accumSell)
 
 		if matchVolume > maxMatchVolume ||
-			(matchVolume == maxMatchVolume && remainVolume < minRemainVolume) {
+			(matchVolume == maxMatchVolume && remainVolume < minRemainVolume) ||
+			(matchVolume == maxMatchVolume && remainVolume == minRemainVolume && pp.price > bestPrice) {
 			maxMatchVolume = matchVolume
 			minRemainVolume = remainVolume
 			bestPrice = pp.price
