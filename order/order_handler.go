@@ -53,9 +53,9 @@ func ParseOrder(record []string) (Order, error) {
 
 	return Order{
 		InstrumentID: record[0],
-		Direction:    direction,
+		Direction:    int8(direction),
 		Price:        float32(price),
-		Volume:       volume,
+		Volume:       int32(volume),
 	}, nil
 }
 

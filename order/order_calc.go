@@ -7,8 +7,8 @@ import (
 
 type PricePoint struct {
 	price      int64 // 价格（以tick为单位）
-	buyVolume  int   // 该价格的买单量
-	sellVolume int   // 该价格的卖单量
+	buyVolume  int32 // 该价格的买单量
+	sellVolume int32 // 该价格的卖单量
 }
 
 // 工具函数
@@ -27,7 +27,6 @@ func CalculateAuctionPrice(orders []Order) float32 {
 	}
 
 	priceMap := NewPriceLevelMap()
-
 	tick := orders[0].GetTick()
 
 	for _, order := range orders {
@@ -59,12 +58,12 @@ func CalculateAuctionPrice(orders []Order) float32 {
 		return 0
 	}
 
-	maxMatchVolume := -1
-	minRemainVolume := math.MaxInt32
+	var maxMatchVolume int32 = -1
+	var minRemainVolume int32 = math.MaxInt32
 	var bestPrice int64
 
-	accumBuy := 0
-	accumSell := 0
+	var accumBuy int32 = 0
+	var accumSell int32 = 0
 
 	// 构造完整的分价表
 	pricePoints := make([]PricePoint, 0)

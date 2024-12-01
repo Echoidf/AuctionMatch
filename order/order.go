@@ -16,9 +16,9 @@ type (
 	// Order 订单
 	Order struct {
 		InstrumentID string
-		Direction    int // 0:买, 1:卖
+		Direction    int8 // 0:买, 1:卖
 		Price        float32
-		Volume       int
+		Volume       int32
 	}
 	// PriceLevel 价格档位信息
 	PriceLevel struct {
@@ -35,10 +35,10 @@ type (
 
 	// PriceLevelMap 价格档位映射
 	PriceLevelMap struct {
-		buyLevels  map[int64]int // 买单价格档位
-		sellLevels map[int64]int // 卖单价格档位
-		highestBid float32       // 最高买单价格
-		lowestAsk  float32       // 最低卖单价格
+		buyLevels  map[int64]int32 // 买单价格档位
+		sellLevels map[int64]int32 // 卖单价格档位
+		highestBid float32         // 最高买单价格
+		lowestAsk  float32         // 最低卖单价格
 		sync.RWMutex
 	}
 )
@@ -58,8 +58,8 @@ func NewOrderStream() *OrderStream {
 
 func NewPriceLevelMap() *PriceLevelMap {
 	return &PriceLevelMap{
-		buyLevels:  make(map[int64]int),
-		sellLevels: make(map[int64]int),
+		buyLevels:  make(map[int64]int32),
+		sellLevels: make(map[int64]int32),
 		highestBid: -1,
 		lowestAsk:  -1,
 	}
